@@ -18,7 +18,8 @@ troubleshooting system issues and optimization of performance/resources.
 
 The RPMI Telemetry service group aims to assist system-level telemetry. It
 defines a set of services that allow application processors to obtain various
-system-level data from platform microcontrollers.
+system-level data from platform microcontrollers. The group also serves sensors
+which will be accessed purely from the sensors standpoint and not telemetry.
 
 ==== Introduction
 
@@ -40,6 +41,18 @@ For example, CPU temperature, GPU voltage, NPU power, Memory size are different
 TDEs. The value of some TDEs can come from an associated physical sensor, while
 the value of other TDEs can be runtime register values, software counters, or
 aggregated values.
+
+TDE includes sensors providing simple scalar values like voltage, temperature
+or they can be multi-axis which measure and provide data values along more than
+one axes like IMU which can combine accelerometer, gyroscope, magnetometer.
+
+Each axis of a multi-axis sensor functions as an independent sensor and hence
+it should be represented as a separate TDE. Each axis specifies its own unit of
+measurement and other attributes. A sensor reporting uncalibrated values can
+report bias estimates as additional axes of measurement.
+
+One of the TDE attribute defines its purpose - simple sensor control,
+configuration and access or telemetry information.
 
 ===== Telemetry Data Element Component and Type
 
@@ -98,8 +111,7 @@ identifiers as mentioned in the following tables -
 
 ===== Telemetry Data Capture Mode
 
-Each TDE will capture its telemetry data in one of the mode listed in the
-following table:
+Each TDE will capture its data in one of the mode listed in the following table:
 
 [#table-data-capture-mode]
 .Data Capture Mode
@@ -110,12 +122,16 @@ following table:
 | 0x00 | Unspecified | -
 | 0x01 | Cumulative | Successive additive value since the data capture started
 | 0x02 | Continuous | Instantaneous value obtained at each sampling interval
-| 0x03 | Average | Average of all the values since the data capture started
-| 0x04 | State | ON/ OFF or active/ inactive
-| 0x05 | Counter | Sequential count value since the data capture started
-| 0x06-0x7F | Reserved for future use | -
+| 0x03 | Spot | Instantaneous value obtained at next sampling interval
+| 0x04 | Average | Average of all the values since the data capture started
+| 0x05 | State | ON/ OFF or active/ inactive
+| 0x06 | Counter | Sequential count value since the data capture started
+| 0x07-0x7F | Reserved for future use | -
 | 0x80-0xFF | OEM or Implementation defined | -
 |===
+
+A TDE whose purpose is just sensor configuration and access, will mostly be
+capturing data in Spot or Continuos mode only.
 
 ===== Telemetry Shared Memory Region
 
@@ -131,14 +147,14 @@ offset when added to the `base-address` of the Telemetry shared memory region
 gives the address from where a particular TDE area begins.
 
 The Telemetry shared memory region is owned by the platform microcontroller.
-The telemetry data producer (i.e., the platform microcontroller) will be the
-one writing this region with telemetry data, while the application processor
-will be the consumer reading telemetry data from the shared memory region.
+The data producer (i.e., the platform microcontroller) will be the one writing
+this region with telemetry or sensor data, while the application processor will
+be the consumer reading telemetry or sensor data from the shared memory region.
 
 ===== Telemetry Data Element Data Unit
 
-A TDE's telemetry data value as per its Type will be in some unit like `Watts`,
-`Ampere`, etc. and this unit can be derived from the formula
+A TDE's data value as per its Type will be in some unit like `Watts`, `Ampere`,
+etc. and this unit can be derived from the formula
 
 ====
 [stem]
@@ -165,7 +181,7 @@ The `TELEMETRY_GET_ATTRIBUTES` service indicates whether the RPMI Telemetry
 group supports timestamps via the `TS_CTR_FREQ` value. A TDE further indicates
 its timestamp support via the `TELEMETRY_GET_TDE_ATTRIBUTES` service. There can
 be scenarios in which the Telemetry group supports timestamps, but not all TDEs
-provide timestamped telemetry data values.
+provide timestamped data values.
 
 Accordingly, a TDE's shared memory content will be as per one of the following
 data formats:
@@ -253,6 +269,16 @@ various attributes of a TDG can be iteratively obtained using the
 `TELEMETRY_GET_TDG_ATTRIBUTES` service.
 
 Each TDE MUST be a part of one and only one TDG.
+
+It makes sense to group the various TDEs of a multi-axis sensor together in a
+single TDG. For the sake of simplicity, it is recommended to have ONLY one
+multi-axis sensor as part of a TDG and nothing else should be part of that TDG.
+
+It is further recommended to group the various TDEs of a multi-axis sensor in
+their natural alphabetical order like X, Y, Z-axis. How does it effect?
+
+The trip-point configuration is through `TDG_START` and hence a TDG cannot have
+multiple sensor only elements unless all TDEs can support same configuration.
 
 [#sampling-interval-format-section]
 ===== Sampling Interval Format
@@ -362,7 +388,7 @@ The following table lists the services provided by the TELEMETRY service group:
 
 [#table_telemetry_services]
 .TELEMETRY Services
-[cols="1, 3, 2, 1", width=100%, align="center", options="header"]
+[cols="1, 4, 2, 1", width=100%, align="center", options="header"]
 |===
 | Service ID
 | Service Name
@@ -385,30 +411,39 @@ The following table lists the services provided by the TELEMETRY service group:
 | 2.0
 
 | 0x04
-| TELEMETRY_GET_TDG_ATTRIBUTES
+| TELEMETRY_GET_SENSOR_ATTRIBUTES
 | NORMAL_REQUEST
 | 2.0
 
 | 0x05
-| TELEMETRY_GET_TDG_SAMPLING_INTERVALS
+| TELEMETRY_GET_TDG_ATTRIBUTES
 | NORMAL_REQUEST
 | 2.0
 
 | 0x06
-| TELEMETRY_TDG_START
+| TELEMETRY_GET_TDG_SAMPLING_INTERVALS
 | NORMAL_REQUEST
 | 2.0
 
 | 0x07
-| TELEMETRY_TDG_REFRESH
+| TELEMETRY_TDG_START
 | NORMAL_REQUEST
 | 2.0
 
 | 0x08
+| TELEMETRY_TDG_REFRESH
+| NORMAL_REQUEST
+| 2.0
+
+| 0x09
 | TELEMETRY_TDG_STOP
 | NORMAL_REQUEST
 | 2.0
 |===
+
+What is not yet covered - Synchronous Read, Continuous Update events,
+SENSOR_CONFIG_GET (sensor sampling interval, sensor state, timestamp info),
+number of outstanding async commands, sampling interval rounding up/down.
 
 [#telemetry-notifications]
 ==== Notifications
@@ -426,6 +461,18 @@ The supported events are described in <<telemetry-notifications>>.
 
 Refer to <<table_common_ennotification_request_data>> for Request Data and
 <<table_common_ennotification_response_data>> for Response Data.
+
+It would be desirable to support events to avoid wastage of CPU cycles at the
+AP level. This would be required for trip events in case of a sensor and also
+for a sensor which is a bit slow in terms of providing its data. Thus, this
+will enable asynchronous operational mode with events. Presently, asynchronous
+operational mode is supported, but AP needs to poll the TDE's Sequence Counter.
+
+A sensor supporting trip-point will generate a TELEMETRY_EVENT_TRIP_POINT when
+its scalar value crosses the configured threshold. Multi-axis sensors can also
+optionally support trip-points only if all the axes report their values in same
+units. In such a case, TELEMETRY_EVENT_TRIP_POINT is generated when value on
+any axis crosses the configured threshold.
 
 ==== Service: TELEMETRY_GET_ATTRIBUTES (SERVICE_ID: 0x02)
 
@@ -517,8 +564,8 @@ This service provides a description of the TDE's attributes, i.e., the shared
 memory region offset and size where the telemetry data associated with the TDE
 is provided; the TDE's component and its instance; the TDE's type and its
 instance; the TDE's data capture mode and data unit; the Telemetry Data Group
-it belongs to; its flags, including whether it supports timestamped telemetry
-data values; and the TDE's name.
+it belongs to; its flags, including whether it supports timestamped data
+values; and the TDE's name.
 
 [#table_telemetry_get_tde_attr_request_data]
 .Request Data
@@ -654,8 +701,15 @@ data values; and the TDE's name.
 ! Bits
 ! Description
 
-! [31:1]
+! [31:2]
 ! _Reserved_ and must be `0`.
+
+! [1]
+! TDE's access purpose.
+----
+0b0: Telemetry information.
+0b1: Sensor configuration or reading.
+----
 
 ! [0]
 ! Timestamp support.
@@ -681,7 +735,159 @@ NOTE: TDE's timestamp support has no meaning unless the
 value. There may be scenarios where some TDEs may not reflect a timestamp
 support, while other TDEs can.
 
-==== Service: TELEMETRY_GET_TDG_ATTRIBUTES (SERVICE_ID: 0x04)
+If to support sensor value reading in synchronous mode, then TDE_SHMEM_OFFSET
+and TDE_SHMEM_SIZE fields are not required. If to support both synchronous as
+well as asynchronous reading mode for sensors or for some sensors, then these
+fields can't be moved to Sensor only descriptor. Even the fields TDE_COMP_INFO
+and TDE_TYPE_INFO are not strictly required for sensor only access (not there
+in SCMI). TBD - if to keep them only for Telemetry. Sensor will have names and
+as per SCMI they seem to have longer names - I think they might be including
+component info in that name which are covered by means of COMP and TYPE fields
+for us - so TDE_NAME field is good enough to be retained for sensor name also
+(16 bytes max).
+
+We are at the edge in this slot. Now, the sensor only attributes can be covered
+by making this service call iterative (returned, remaining) or by introducing a
+separate service call say `TELEMETRY_GET_SENSOR ATTRIBUTES`.
+
+If bit[31] of TDE_FLAGS is set to 1, then some sensor only attributes can be
+obtained by using `TELEMETRY_GET_SENSOR ATTRIBUTES` service.
+
+==== Service: TELEMETRY_GET_SENSOR_ATTRIBUTES (SERVICE_ID: 0x04)
+
+This service provides a description of sensor only attributes like whether it
+is a multi-axis sensor, supported number of axes, trip-points, sensor power,
+resolution, range (min, max). This service should be invoked only if bit[31] of
+TDE_FLAGS as returned in the `TELEMETRY_GET_TDE_ATTRIBUTES` service is set to 1.
+
+Sensor resolution is in same units as specified by TDE_DCMODE_DUNIT field in
+the `TELEMETRY_GET_TDE_ATTRIBUTES` service.
+
+[#table_telemetry_get_sensor_attr_request_data]
+.Request Data
+[cols="1, 3, 2, 7a", width=100%, align="center", options="header"]
+|===
+| Word
+| Name
+| Type
+| Description
+
+| 0
+| TDE_INDEX
+| uint32
+| Index of a Telemetry Data Element.
+|===
+
+[#table_telemetry_get_sensor_attr_response_data]
+.Response Data
+[cols="1, 3, 2, 7a", width=100%, align="center", options="header"]
+|===
+| Word
+| Name
+| Type
+| Description
+
+| 0
+| STATUS
+| int32
+| Return error code.
+[cols="6, 5", options="header"]
+!===
+! Error Code
+! Description
+
+! RPMI_SUCCESS
+! Service completed successfully.
+
+! RPMI_ERR_INVALID_PARAM
+! `TDE_INDEX` is invalid.
+!===
+- Other errors <<table_error_codes>>.
+
+| 1
+| SENSOR_FLAGS
+| uint32
+| Sensor Flags.
+[cols="1, 6a", options="header"]
+!===
+! Bits
+! Description
+
+! [31:21]
+! _Reserved_ and must be `0`.
+
+! [20:13]
+! Number of trip-points supported by the sensor.
+
+! [12:7]
+! Axis id if bit[0] is set to 1. Its value ranges from 0 to one less than the
+  number of axes of measurement as reported by bits[6:1]. 
+
+! [6:1]
+! Number of axes of measurement supported by the sensor if bit[0] is set to 1.
+  _Reserved_ and must be `0` if bit[0] is set to 0.
+
+! [0]
+! Multi-axis support.
+----
+0b0: Sensor reports scalar values.
+0b1: Multi-axis sensor which reports values along two or more axes.
+----
+!===
+
+| 2
+| SENSOR_POWER
+| uint32
+| Average power consumed by the sensor as per its specification in microwatts
+  (uW) when it is active. _Reserved_ and must be `0` if the sensor does not
+  reports its power consumed.
+  This field must not be used to return the actual measured power consumption
+  of the sensor at runtime. Repeated calls to this service for the same sensor
+  must return the same values.
+  For a multi-axis sensor, this field will represent the axis power.
+
+| 3
+| SENSOR_RESOLUTION
+| uint32
+| Resolution (value) of the sensor if bit[31] is set to 1 and sensor report its
+  resolution. _Reserved_ and must be `0` if bit[31] is set to 0 or the sensor
+  does not reports its resolution.
+  For a multi-axis sensor, this field will represent the axis resolution.
+  Sensor resolution is in same units as specified by TDE_DCMODE_DUNIT field in
+  the `TELEMETRY_GET_TDE_ATTRIBUTES` service.
+
+| 4
+| SENSOR_MIN_RANGE_LOW
+| uint32
+| Lower 32-bits of the minimum value that can be measured by the sensor or
+  sensor's axis.
+  _Reserved_ and must be `0` if the sensor does not reports its minimum range.
+
+| 5
+| SENSOR_MIN_RANGE_HIGH
+| uint32
+| Upper 32-bits of the minimum value that can be measured by the sensor or
+  sensor's axis.
+  _Reserved_ and must be `0` if the sensor does not reports its minimum range.
+
+| 6
+| SENSOR_MAX_RANGE_LOW
+| uint32
+| Lower 32-bits of the maximum value that can be measured by the sensor or
+  sensor's axis.
+  _Reserved_ and must be `0` if the sensor does not reports its maximum range.
+  0xFFFFFFFF - SCMI
+
+| 7
+| SENSOR_MAX_RANGE_HIGH
+| uint32
+| Upper 32-bits of the maximum value that can be measured by the sensor or
+  sensor's axis.
+  _Reserved_ and must be `0` if the sensor does not reports its maximum range.
+  0x7FFFFFFF - SCMI
+|===
+
+==== Service: TELEMETRY_GET_TDG_ATTRIBUTES (SERVICE_ID: 0x05)
 
 This service provides a description of the Telemetry Data Group's attributes,
 i.e., the number of supported sampling intervals, the TDG's name, TDG's flags
@@ -780,7 +986,7 @@ configuration words.
 | TDG's name, a NULL-terminated ASCII string up to 16-bytes.
 |===
 
-==== Service: TELEMETRY_GET_TDG_SAMPLING_INTERVALS (SERVICE_ID: 0x05)
+==== Service: TELEMETRY_GET_TDG_SAMPLING_INTERVALS (SERVICE_ID: 0x06)
 
 This service is used to get the sampling intervals supported by a TDG. The
 cumulative number of sampling intervals and their format returned depend on the
@@ -888,7 +1094,7 @@ linear ranges till the `REMAINING` field is not `0`.
   supported format. Refer <<sampling-interval-format-section>> for details.
 |===
 
-==== Service: TELEMETRY_TDG_START (SERVICE_ID: 0x06)
+==== Service: TELEMETRY_TDG_START (SERVICE_ID: 0x07)
 
 This service is used to initiate or start the capture of TDG's telemetry data
 as per the desired configuration. The offsets in shared memory where telemetry
@@ -905,6 +1111,64 @@ Sequence Counter is expected to be handled by the client.
 NOTE: As long as a TDE's Data Sequence Counter remains at its initial value of
       `0`, it means there is no data yet for that TDE. This does not apply in
       the case of a wraparound. Refer <<tde-data-format>> for details.
+
+For a sensor only TDG, the trip event configuration can be specificed through
+the configuration words parameter (may be we can drop the word implementation
+from implementation-specific and can term it as group-specific words) which
+for such a TDG are not actually required to be first specified/ obtained
+through the `TELEMETRY_GET_TDG_ATTRIBUTES` service.
+
+One configuration word specifying ID of the trip event and its direction would
+be required. Two other words will be needed to define the trip-point low and
+high 32-bit values. The TDG_START call will serve as trip-point enablement call
+and TDG_STOP call serves the trip-point disablement.
+
+[#table-trip-point-event-config-words]
+.Trip-point Event Configuration Words
+[cols="1, 3, 2, 7a", width=100%, align="center", options="header"]
+|===
+| Word
+| Name
+| Type
+| Description
+
+| 0
+| TP_CTRL
+| uint32
+| Event Control 
+[cols="1, 6a", options="header"]
+!===
+! Bits
+! Description
+
+! [31:10]
+! _Reserved_ and must be `0`.
+
+! [9:2]
+! Trip-point id. Its value ranges from 0 to one less than the number of
+  trip-points supported as reported by `TELEMETRY_GET_SENSOR_ATTRIBUTES`
+  service in its response through `SENSOR_FLAGS`.
+
+! [1:0]
+! Trip-point event enablement condition.
+----
+0b00: Reserved.
+0b01: Trip-point value is reached or breached in a positive direction.
+0b10: Trip-point value is reached or breached in a negative direction.
+0b11: Trip-point value is reached or breached in any direction.
+----
+!===
+
+| 1
+| TP_VAL_LOW
+| uint32
+| Lower 32-bits of the sensor trip-point value.
+
+| 2
+| TP_VAL_HIGH
+| uint32
+| Upper 32-bits of the sensor trip-point value.
+|===
 
 [#table_telemetry_tdg_start_request_data]
 .Request Data
@@ -963,7 +1227,7 @@ NOTE: As long as a TDE's Data Sequence Counter remains at its initial value of
 - Other errors <<table_error_codes>>.
 |===
 
-==== Service: TELEMETRY_TDG_REFRESH (SERVICE_ID: 0x07)
+==== Service: TELEMETRY_TDG_REFRESH (SERVICE_ID: 0x08)
 
 This service allows the client to make infrequent on-demand sampling requests
 to the platform microcontroller, thereby obtaining the latest telemetry data
@@ -1015,7 +1279,7 @@ call, its Data Sequence Counter also gets incremented to the next even value.
 - Other errors <<table_error_codes>>.
 |===
 
-==== Service: TELEMETRY_TDG_STOP (SERVICE_ID: 0x08)
+==== Service: TELEMETRY_TDG_STOP (SERVICE_ID: 0x09)
 
 This service is used to terminate or stop the capture of telemetry data
 corresponding to a TDG.
